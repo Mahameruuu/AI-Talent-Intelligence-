@@ -41,11 +41,16 @@ const existingJob: Job = {
   closes_on: null,
   application_window: null,
   days_left: null,
+  opens_time: null,
+  closes_time: null,
+  opens_at: null,
+  closes_at: null,
   auto_invite: {
     enabled: false,
     top_n: 10,
     min_score: null,
     send_at: null,
+    timing: "next_morning",
     status: "disabled",
     template_id: null,
     template_name: null,
@@ -112,8 +117,11 @@ describe("JobForm", () => {
       // Default application period: today until today + 30 days.
       opens_on: isoLocalDate(new Date()),
       closes_on: isoLocalDate(addDays(new Date(), 30)),
-      // Automatic AI-interview invitations are on by default for new jobs.
-      auto_invite: { enabled: true, top_n: 10, min_score: null },
+      // Times are optional: null = 00:00 (open) / end of the day (close).
+      opens_time: null,
+      closes_time: null,
+      // Automatic AI-interview invitations are on by default for new jobs, the next morning.
+      auto_invite: { enabled: true, top_n: 10, min_score: null, timing: "next_morning" },
     });
     expect(payload).not.toHaveProperty("weights");
   });
@@ -147,6 +155,80 @@ describe("JobForm", () => {
       closes_on: "2026-10-30",
       auto_invite: { enabled: true, top_n: 5, min_score: 60 },
     });
+  });
+
+  it("sends opening/closing times and invites right after applications close", async () => {
+    const { user, onSubmit } = setup();
+
+    await user.type(screen.getByLabelText(/^job title/i), "Data Scientist");
+    await user.type(screen.getByLabelText(/^job description/i), "Build and ship ML models.");
+    await user.type(screen.getByLabelText(/^required skills/i), "Python{Enter}");
+    const opens = screen.getByLabelText(/^applications open on/i);
+    const closes = screen.getByLabelText(/^application deadline/i);
+    await user.clear(opens);
+    await user.type(opens, "2026-10-27");
+    await user.clear(closes);
+    await user.type(closes, "2026-10-27");
+    await user.type(screen.getByLabelText("Opening time (WIB)"), "09:00");
+    await user.type(screen.getByLabelText("Closing time (WIB)"), "14:00");
+
+    // Next morning is the default; the sentence follows the deadline day.
+    expect(screen.getByRole("radio", { name: /Next morning at 08:00 WIB/ })).toBeChecked();
+    expect(screen.getByText("Wed, 28 Oct 2026 at 08:00 WIB")).toBeInTheDocument();
+    expect(screen.getByText(/applications accepted until 14:00 WIB on 27 Oct 2026/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("radio", { name: /Right after applications close/ }));
+    expect(screen.getByText("Tue, 27 Oct 2026 at 14:00 WIB")).toBeInTheDocument();
+    expect(screen.getByText(/— right after applications close\./)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Create job" }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(onSubmit.mock.calls[0]?.[0]).toMatchObject({
+      opens_on: "2026-10-27",
+      opens_time: "09:00",
+      closes_on: "2026-10-27",
+      closes_time: "14:00",
+      auto_invite: { enabled: true, top_n: 10, timing: "on_close" },
+    });
+  });
+
+  it("requires the closing time to be after the opening time on the same day", async () => {
+    const { user, onSubmit } = setup();
+
+    await user.type(screen.getByLabelText(/^job title/i), "QA Engineer");
+    await user.type(screen.getByLabelText(/^job description/i), "Test automation for web products.");
+    await user.type(screen.getByLabelText(/^required skills/i), "Selenium{Enter}");
+    const opens = screen.getByLabelText(/^applications open on/i);
+    const closes = screen.getByLabelText(/^application deadline/i);
+    await user.clear(opens);
+    await user.type(opens, "2026-12-01");
+    await user.clear(closes);
+    await user.type(closes, "2026-12-01");
+    await user.type(screen.getByLabelText("Opening time (WIB)"), "15:00");
+    await user.type(screen.getByLabelText("Closing time (WIB)"), "10:00");
+    await user.click(screen.getByRole("button", { name: "Create job" }));
+
+    expect(await screen.findByText("Applications must close after they open.")).toBeInTheDocument();
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("loads a job's times and invite timing when editing", () => {
+    setup({
+      mode: "edit",
+      defaultValues: {
+        ...existingJob,
+        opens_on: "2026-10-26",
+        closes_on: "2026-10-27",
+        opens_time: "08:30",
+        closes_time: "14:00",
+        auto_invite: { ...existingJob.auto_invite, enabled: true, status: "scheduled", timing: "on_close" },
+      },
+    });
+
+    expect(screen.getByLabelText("Opening time (WIB)")).toHaveValue("08:30");
+    expect(screen.getByLabelText("Closing time (WIB)")).toHaveValue("14:00");
+    expect(screen.getByRole("radio", { name: /Right after applications close/ })).toBeChecked();
+    expect(screen.getByText("Tue, 27 Oct 2026 at 14:00 WIB")).toBeInTheDocument();
   });
 
   it("asks for a closing date and validates the number of applicants", async () => {
@@ -188,6 +270,7 @@ describe("JobForm", () => {
           enabled: true,
           status: "sent",
           send_at: "2026-10-31T08:00:00+07:00",
+          timing: "next_morning",
           ran_at: "2026-10-31T08:00:05+07:00",
           invited_count: 8,
         },

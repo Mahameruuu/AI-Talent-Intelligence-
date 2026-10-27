@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime, time, timezone
 from typing import Any
 
 from sqlalchemy import (
@@ -15,6 +15,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    Time,
     UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -66,16 +67,22 @@ class Job(TimestampMixin, db.Model):
     salary_min: Mapped[int | None] = mapped_column(BigInteger)
     salary_max: Mapped[int | None] = mapped_column(BigInteger)
     salary_visible: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
-    # Application period (inclusive, in the organisation's timezone). Null = no limit (older jobs).
+    # Application period (in the organisation's timezone). Null dates = no limit (older jobs). Applications open at
+    # opens_on opens_time (00:00 when null) and close at closes_on closes_time (end of day when null).
     opens_on: Mapped[date | None] = mapped_column(Date)
     closes_on: Mapped[date | None] = mapped_column(Date)
+    opens_time: Mapped[time | None] = mapped_column(Time)
+    closes_time: Mapped[time | None] = mapped_column(Time)
     # Deprecated: scoring weights are organisation-wide (ti_settings "scoring_weights"); kept for old rows.
     weights: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     is_demo: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    # Automatic AI-interview invitations, sent the day after closes_on (see services/auto_invite.py).
+    # Automatic AI-interview invitations after the period closes (see services/auto_invite.py).
     auto_invite_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
     auto_invite_top_n: Mapped[int] = mapped_column(Integer, nullable=False, default=10, server_default="10")
     auto_invite_min_score: Mapped[float | None] = mapped_column(Float)
+    # next_morning (AUTO_INVITE_HOUR the day after closes_on) | on_close (right after the closing moment)
+    auto_invite_timing: Mapped[str] = mapped_column(String(20), nullable=False, default="next_morning",
+                                                    server_default="next_morning")
     # Set when a run (scheduled or "Send now") completed; the scheduler never sends again after that.
     auto_invite_ran_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # {trigger, template_id, template_name, invited_count, emailed_count, skipped: {...}, application_ids}

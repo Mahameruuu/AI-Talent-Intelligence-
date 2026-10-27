@@ -274,8 +274,10 @@ def submit(form: ApplicationForm, payload: dict[str, Any], cv_filename: str | No
            consent: bool) -> Application:
     reason = closed_reason(form)
     if reason == "not_yet_open":
-        raise ApiError(410, "not_yet_open",
-                       f"Applications for this job open on {form.job.opens_on.isoformat()}.")
+        opens = form.job.opens_on.isoformat()
+        if form.job.opens_time is not None:
+            opens += f" at {job_period.hhmm(form.job.opens_time)} WIB"
+        raise ApiError(410, "not_yet_open", f"Applications for this job open on {opens}.")
     if reason == "deadline_passed":
         raise ApiError(410, "deadline_passed", "The application deadline for this job has passed.")
     if reason:
@@ -355,6 +357,10 @@ def form_dict(form: ApplicationForm) -> dict:
         # The job's application period is the deadline applicants see.
         "job_opens_on": form.job.opens_on.isoformat() if form.job.opens_on else None,
         "job_closes_on": form.job.closes_on.isoformat() if form.job.closes_on else None,
+        "job_opens_time": job_period.hhmm(form.job.opens_time),
+        "job_closes_time": job_period.hhmm(form.job.closes_time),
+        "job_opens_at": job_period.iso(job_period.opens_at(form.job)),
+        "job_closes_at": job_period.iso(job_period.closes_at(form.job)),
         "closes_at": form.closes_at.isoformat() if form.closes_at else None,
         "published_at": form.published_at.isoformat() if form.published_at else None,
         "submission_count": count,
@@ -381,6 +387,10 @@ def public_form_dict(form: ApplicationForm) -> dict:
             "min_experience_years": job.min_experience_years,
             "opens_on": job.opens_on.isoformat() if job.opens_on else None,
             "closes_on": job.closes_on.isoformat() if job.closes_on else None,
+            "opens_time": job_period.hhmm(job.opens_time),
+            "closes_time": job_period.hhmm(job.closes_time),
+            "opens_at": job_period.iso(job_period.opens_at(job)),
+            "closes_at": job_period.iso(job_period.closes_at(job)),
             "employment_type": job.employment_type,
             # Salary is only published when HR chose to show it.
             "salary_min": job.salary_min if job.salary_visible else None,

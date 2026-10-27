@@ -2,7 +2,7 @@ import { CalendarClock, CheckCircle2, ChevronRight, MessagesSquare } from "lucid
 import { Link } from "react-router";
 import { Card, CardHeader, EmptyState } from "@/components/ui";
 import type { DashboardAttentionItem } from "@/types/api";
-import { formatDay, formatNumber, formatRelative, formatScore, pluralize } from "@/utils/format";
+import { formatDayTime, formatNumber, formatRelative, formatScore, pluralize } from "@/utils/format";
 import { candidatesHref, closesIn } from "../dashboard-utils";
 
 function itemContent(item: DashboardAttentionItem) {
@@ -31,7 +31,7 @@ function itemContent(item: DashboardAttentionItem) {
     icon: <CalendarClock className="size-4" aria-hidden />,
     iconClass: "bg-amber-50 text-amber-700",
     title: item.job_title,
-    detail: `${closesIn(item.days_left)} (${formatDay(item.closes_on)})`,
+    detail: `${closesIn(item.days_left)} (${formatDayTime(item.closes_on, item.closes_time)})`,
     aside: (
       <span className="text-right text-xs text-slate-500">
         {pluralize(item.applicants, "applicant")}

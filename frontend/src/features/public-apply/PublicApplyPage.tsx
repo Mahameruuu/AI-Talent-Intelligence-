@@ -181,6 +181,8 @@ function ApplicationForm({ slug, form }: { slug: string; form: PublicApplication
         reason={screen.reason}
         opensOn={form.job.opens_on}
         closesOn={form.job.closes_on}
+        opensTime={form.job.opens_time}
+        closesTime={form.job.closes_time}
       />
     );
   if (screen.kind === "not_found") return <InvalidLinkScreen />;
@@ -354,6 +356,8 @@ export function PublicApplyPage() {
         reason={toClosedReason(query.data.closed_reason)}
         opensOn={query.data.job.opens_on}
         closesOn={query.data.job.closes_on}
+        opensTime={query.data.job.opens_time}
+        closesTime={query.data.job.closes_time}
       />
     );
   }

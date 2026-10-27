@@ -23,13 +23,14 @@ Dashboard = ns.model("Dashboard", {
                                 "interviews_completed": 12, "waiting_for_decision": 4, "hired": 3, "decided": 10,
                                 "hire_rate": 30.0}),
     "jobs": fields.Raw(example=[{"job_id": 1, "title": "Data Scientist", "status": "open", "closes_on": "2026-11-01",
-                                 "auto_invite_on": "2026-11-02", "applicants": 20, "avg_match_score": 64.2,
+                                 "closes_time": "17:00", "closes_at": "2026-11-01T17:00:00+07:00",
+                                 "auto_invite_on": "2026-11-02", "auto_invite_at": "2026-11-02T08:00:00+07:00", "applicants": 20, "avg_match_score": 64.2,
                                  "interviewed": 5, "hired": 1}]),
     "attention": fields.Raw(example=[
         {"kind": "decision", "session_id": 7, "application_id": 12, "candidate_name": "Rina Wijaya",
          "job_title": "Data Scientist", "interview_score": 78.0, "completed_at": "2026-10-25T03:00:00+00:00"},
         {"kind": "job_closing", "job_id": 1, "job_title": "Data Scientist", "closes_on": "2026-10-29",
-         "days_left": 2, "applicants": 20}]),
+         "closes_time": None, "closes_at": "2026-10-29T23:59:59+07:00", "days_left": 2, "applicants": 20}]),
     "monthly": fields.Raw(example=[{"month": "2026-10", "applicants": 18, "jobs_opened": 2, "interviews_completed": 5,
                                     "hired": 1}]),
 })

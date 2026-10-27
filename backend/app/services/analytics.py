@@ -10,6 +10,7 @@ from sqlalchemy import and_, exists, func, or_, select, true
 
 from ..extensions import db
 from ..models import Application, Candidate, InterviewEvaluation, InterviewSession, Job
+from . import auto_invite, job_period
 
 JOBS_TABLE_LIMIT = 6
 ATTENTION_LIMIT = 5
@@ -18,13 +19,10 @@ MONTHS = 12
 CLOSED_STAGES = ("hired", "rejected", "withdrawn")
 
 
-def _today(tz: ZoneInfo) -> date:
-    return datetime.now(tz).date()
-
-
 def dashboard() -> dict:
     tz = ZoneInfo(current_app.config["TIMEZONE"])
-    today = _today(tz)
+    now = datetime.now(tz)
+    today = now.date()
     scope = true()
     week_ago = datetime.now(timezone.utc) - timedelta(days=7)
 
@@ -50,8 +48,8 @@ def dashboard() -> dict:
         ).where(scope).group_by(Application.job_id)
     )}
 
-    jobs_q = select(Job.id, Job.title, Job.status, Job.closes_on, Job.auto_invite_enabled, Job.auto_invite_ran_at,
-                    Job.created_at, Job.is_demo)
+    jobs_q = select(Job.id, Job.title, Job.status, Job.opens_on, Job.opens_time, Job.closes_on, Job.closes_time,
+                    Job.auto_invite_enabled, Job.auto_invite_ran_at, Job.auto_invite_timing, Job.created_at, Job.is_demo)
     jobs = db.session.execute(jobs_q).all()
 
     def total(field: str) -> int:
@@ -62,17 +60,21 @@ def dashboard() -> dict:
 
     # Jobs table: open first, then drafts, then closed; soonest deadline first.
     status_rank = {"open": 0, "draft": 1, "closed": 2}
+    far = datetime.max.replace(tzinfo=tz)
     ordered = sorted(jobs, key=lambda j: (status_rank.get(j.status, 3), j.closes_on is None,
-                                          j.closes_on or date.max, -j.created_at.timestamp()))
+                                          job_period.deadline(j) or far, -j.created_at.timestamp()))
     jobs_table = []
     for j in ordered[:JOBS_TABLE_LIMIT]:
         agg = per_job.get(j.id)
-        auto_invite_on = (j.closes_on + timedelta(days=1)).isoformat() \
+        invite_at = auto_invite.send_at(j) \
             if j.auto_invite_enabled and j.auto_invite_ran_at is None and j.closes_on and j.status != "draft" else None
         jobs_table.append({
             "job_id": j.id, "title": j.title, "status": j.status,
             "closes_on": j.closes_on.isoformat() if j.closes_on else None,
-            "auto_invite_on": auto_invite_on,
+            "closes_time": job_period.hhmm(j.closes_time),
+            "closes_at": job_period.iso(job_period.closes_at(j)),
+            "auto_invite_on": invite_at.date().isoformat() if invite_at else None,
+            "auto_invite_at": job_period.iso(invite_at),
             "applicants": agg.applicants if agg else 0,
             "avg_match_score": round(float(agg.avg_match_score), 1) if agg and agg.avg_match_score is not None else None,
             "interviewed": agg.interviewed if agg else 0,
@@ -94,14 +96,17 @@ def dashboard() -> dict:
             "hire_rate": round(hired / decided_n * 100, 1) if decided_n else None,
         },
         "jobs": jobs_table,
-        "attention": _attention(scope, waiting, open_jobs, per_job, today),
+        "attention": _attention(scope, waiting, open_jobs, per_job, now),
         "monthly": _monthly(scope, tz, today),
     }
 
 
-def _attention(scope, waiting, open_jobs, per_job, today: date) -> list[dict]:
-    closing = sorted((j for j in open_jobs if j.closes_on and today <= j.closes_on <= today + timedelta(days=CLOSING_SOON_DAYS)),
-                     key=lambda j: j.closes_on)
+def _attention(scope, waiting, open_jobs, per_job, now: datetime) -> list[dict]:
+    # Open jobs whose period hasn't closed yet (to the minute) and whose closing day is within 3 days.
+    today = now.date()
+    closing = sorted((j for j in open_jobs if j.closes_on and not job_period.has_closed(j, now)
+                      and j.closes_on <= today + timedelta(days=CLOSING_SOON_DAYS)),
+                     key=job_period.deadline)
     # Keep room for up to two deadline reminders; decisions fill the rest.
     decision_limit = ATTENTION_LIMIT - min(len(closing), 2)
 
@@ -141,7 +146,9 @@ def _attention(scope, waiting, open_jobs, per_job, today: date) -> list[dict]:
     for j in closing[:ATTENTION_LIMIT - len(items)]:
         agg = per_job.get(j.id)
         items.append({"kind": "job_closing", "job_id": j.id, "job_title": j.title, "closes_on": j.closes_on.isoformat(),
-                      "days_left": (j.closes_on - today).days, "applicants": agg.applicants if agg else 0})
+                      "closes_time": job_period.hhmm(j.closes_time),
+                      "closes_at": job_period.iso(job_period.closes_at(j)),
+                      "days_left": job_period.days_left(j, now), "applicants": agg.applicants if agg else 0})
     return items
 
 

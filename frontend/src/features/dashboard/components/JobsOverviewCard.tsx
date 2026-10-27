@@ -3,17 +3,19 @@ import { Link, useNavigate } from "react-router";
 import { DataTable, type DataTableColumn } from "@/components/tables/DataTable";
 import { Card, CardHeader, ScoreBadge, StatusBadge, buttonClasses } from "@/components/ui";
 import type { DashboardJobRow } from "@/types/api";
-import { formatDay, formatNumber } from "@/utils/format";
+import { formatDayTime, formatNumber, formatShortDateTimeWib } from "@/utils/format";
 import { candidatesHref } from "../dashboard-utils";
 
 function Deadline({ row }: { row: DashboardJobRow }) {
-  const closes = row.status === "open" ? (row.closes_on ? `Closes ${formatDay(row.closes_on)}` : "No deadline") : null;
+  const closes = row.status === "open" ? (row.closes_on ? `Closes ${formatDayTime(row.closes_on, row.closes_time)}` : "No deadline") : null;
   return (
     <div className="space-y-0.5 whitespace-nowrap">
       <StatusBadge kind="job" value={row.status} size="sm" />
       {closes ? <p className="text-xs text-slate-500">{closes}</p> : null}
       {row.auto_invite_on ? (
-        <p className="text-xs text-slate-500">Auto-invite {formatDay(row.auto_invite_on)}</p>
+        <p className="text-xs text-slate-500">
+          Auto-invite {row.auto_invite_at ? formatShortDateTimeWib(row.auto_invite_at) : formatDayTime(row.auto_invite_on, null)}
+        </p>
       ) : null}
     </div>
   );

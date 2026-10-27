@@ -40,10 +40,21 @@ CORS allows the origin `FRONTEND_URL` only, with headers `Content-Type, X-Interv
 | POST | `/jobs/{id}/auto-invite/run` | – | `Job` — "Send now": runs the auto-invite selection immediately, regardless of the date and even after a previous run (only applicants without an interview invitation are invited). 409 `no_approved_template` without an approved template; 409 `auto_invite_running` while a batch is being sent |
 | GET | `/jobs/{id}/applications?stage=&min_score=&sort=score|created` | – | `Paginated<Application>` |
 
-### Automatic AI-interview invitations (`Job.auto_invite`)
-Invitations go out automatically **after** the application period closes, e.g. applications 26–30 Oct → links emailed on 31 Oct at 08:00 WIB (`AUTO_INVITE_HOUR`, organisation `TIMEZONE`). HR can still invite manually at any time.
+### Application period (`opens_on`/`opens_time`, `closes_on`/`closes_time`)
+All in the organisation timezone (`TIMEZONE`, default Asia/Jakarta / WIB). `JobInput` accepts `opens_on`/`closes_on` (`YYYY-MM-DD`, nullable) and `opens_time`/`closes_time` (`"HH:MM"` 24-hour, nullable; seconds are dropped; another format → 400 with `details[].field` `opens_time`/`closes_time`).
+- Applications open at `opens_on opens_time` (00:00 when `opens_time` is null) and close at `closes_on closes_time`: from that minute on the job is closed (e.g. `closes_time: "14:00"` → 13:59 still open, 14:00 closed). Without `closes_time` the whole closing day is open (until 23:59:59, as before times existed).
+- The closing moment must be after the opening moment: `closes_on` before `opens_on` → 400 `details.fields.closes_on`; same day with `closes_time` ≤ `opens_time` → 400 `details.fields.closes_time`.
+- `Job` responses add `opens_time`/`closes_time` (`"HH:MM"` or null) and the computed `opens_at`/`closes_at` (ISO 8601 with `+07:00`; `closes_at` is `…T23:59:59+07:00` without a time; null when the date is null).
+- `application_window`: `upcoming` (before `opens_at`), `open`, `ended` (from the closing moment on), null without dates. `days_left`: calendar days until `closes_on` (0 = closes today), null once closed.
 
-`JobInput` accepts an optional nested `"auto_invite": {"enabled"?: bool, "top_n"?: int 1..100, "min_score"?: float 0..100 | null}` on `POST`/`PATCH /jobs` (omitted keys are unchanged; invalid values → 400 with `details[].field` like `auto_invite.top_n`). New jobs default to `enabled: true, top_n: 10, min_score: null`.
+### Automatic AI-interview invitations (`Job.auto_invite`)
+Invitations go out automatically **after** the application period closes. `timing` chooses when:
+- `next_morning` (default): e.g. applications 26–30 Oct → links emailed on 31 Oct at 08:00 WIB (`AUTO_INVITE_HOUR`, organisation `TIMEZONE`);
+- `on_close`: right after the closing moment, e.g. `closes_on: 2026-10-27, closes_time: "14:00"` → sent by the first scheduler tick at/after 27 Oct 14:00 WIB (within `AUTO_INVITE_INTERVAL_SECONDS`, default 60 s). Without `closes_time` that is 00:00 the next day.
+
+HR can still invite manually at any time.
+
+`JobInput` accepts an optional nested `"auto_invite": {"enabled"?: bool, "top_n"?: int 1..100, "min_score"?: float 0..100 | null, "timing"?: "next_morning" | "on_close"}` on `POST`/`PATCH /jobs` (omitted keys are unchanged; invalid values → 400 with `details[].field` like `auto_invite.top_n`). New jobs default to `enabled: true, top_n: 10, min_score: null, timing: "next_morning"`.
 
 `Job.auto_invite` in responses:
 ```json
@@ -51,6 +62,7 @@ Invitations go out automatically **after** the application period closes, e.g. a
   "enabled": true,
   "top_n": 10,
   "min_score": null,
+  "timing": "next_morning",
   "send_at": "2026-10-31T08:00:00+07:00",
   "status": "scheduled",
   "template_id": 3,
@@ -61,14 +73,14 @@ Invitations go out automatically **after** the application period closes, e.g. a
   "error": null
 }
 ```
-- `send_at`: `closes_on` + 1 day at `AUTO_INVITE_HOUR` (WIB, with offset); `null` without `closes_on`.
+- `send_at` (WIB, with offset; `null` without `closes_on`): `next_morning` → `closes_on` + 1 day at `AUTO_INVITE_HOUR`; `on_close` → the closing moment (`closes_on closes_time`, or 00:00 the day after `closes_on` without a time).
 - `status`: `disabled` (not enabled) → `sent` (a run completed; never re-sent automatically, even if `closes_on` is moved later) → `failed` (last run errored, see `error`; retried on the next scheduler tick) → `no_deadline` → `waiting_template` (no approved interview template yet; it sends on the first tick after one is approved) → `scheduled`.
 - `template_id`/`template_name`: the approved template that will be used (the job's most recently approved/updated one), or the one that was used once sent.
 - After a run: `ran_at` (ISO, WIB), `invited_count`, `skipped: {knockout, below_min_score, not_screened, already_invited, beyond_top_n}`.
 
 Selection: applications in `applied`/`screening`/`shortlisted` with a completed screening, no failed must-have (knockout) screening question, score ≥ `min_score` (if set) and no interview session yet; sorted by `match_score` desc, then oldest application first; the top `top_n` are moved to `shortlisted` (stage history note "Shortlisted automatically after applications closed.") and invited with email through the same code path as bulk invite (an individual email failure is logged in the email log and doesn't stop the batch). If CVs are still queued/processing at `send_at`, the scheduler waits up to 2 hours, then counts them as `not_screened`. Every run is audit-logged as `interviews.auto_invite_run` (actor `auto-invite-scheduler` for scheduled runs).
 
-The scheduler runs inside the API process (`AUTO_INVITE_ENABLED`, `AUTO_INVITE_INTERVAL_SECONDS`, default 300 s); each job's batch is claimed atomically in the database, so several processes never send twice.
+The scheduler runs inside the API process (`AUTO_INVITE_ENABLED`, `AUTO_INVITE_INTERVAL_SECONDS`, default 60 s; a tick with nothing due is one small query); each job's batch is claimed atomically in the database, so several processes never send twice.
 
 ## Application forms (HR)
 One form per job. Built-in fields `full_name`, `email`, `phone` and the CV upload are always present and required; HR configures any number of custom fields (`FormField`).
@@ -83,7 +95,9 @@ One form per job. Built-in fields `full_name`, `email`, `phone` and the CV uploa
 ## Public application (candidates; no account)
 The public page is `/apply/:slug` in the frontend.
 | GET | `/public/forms/{slug}` | – | `PublicApplicationForm` (404 if unknown or still draft; closed forms return `accepting_applications: false`) |
-| POST | `/public/forms/{slug}/submit` | multipart: `answers` (JSON string object keyed by field id, incl. `full_name`, `email`, `phone`), `consent` (`"true"`), `cv` (file), `website` (honeypot — must stay empty) | `ApplicationSubmitted` (201). Errors: 400 `validation_error` with `details.fields: {field_id: message}` (CV errors under `cv`); 400 `consent_required`; 409 `already_applied`; 410 `form_closed`; 413 `file_too_large`; 429 `rate_limited` |
+| POST | `/public/forms/{slug}/submit` | multipart: `answers` (JSON string object keyed by field id, incl. `full_name`, `email`, `phone`), `consent` (`"true"`), `cv` (file), `website` (honeypot — must stay empty) | `ApplicationSubmitted` (201). Errors: 400 `validation_error` with `details.fields: {field_id: message}` (CV errors under `cv`); 400 `consent_required`; 409 `already_applied`; 410 `not_yet_open` (before the job's `opens_at`); 410 `deadline_passed` (from the job's closing moment on); 410 `form_closed`; 413 `file_too_large`; 429 `rate_limited` |
+
+`PublicApplicationForm.closed_reason`: `draft`, `closed`, `job_draft`, `not_yet_open`, `deadline_passed` or null — the period uses the exact times (see "Application period"). `PublicApplicationForm.job` includes `opens_on`, `closes_on`, `opens_time`, `closes_time` (`"HH:MM"`/null), `opens_at`, `closes_at` (ISO, `+07:00`). The HR `ApplicationForm` carries the same as `job_opens_on`, `job_closes_on`, `job_opens_time`, `job_closes_time`, `job_opens_at`, `job_closes_at`.
 
 Submissions create (or reuse, by email) the candidate and the application (`source: "public_form"`, `form_answers`), then the CV is processed and screened automatically.
 
@@ -169,8 +183,8 @@ Audio: 404 `not_found` (unknown message, another session's message, or a candida
 `Dashboard` (one call for the home page):
 - `has_data`, `has_demo_data`
 - `kpis`: `open_jobs`, `total_jobs`, `applicants`, `applicants_this_week` (last 7 days), `interviews_completed` (applications with a completed AI interview), `waiting_for_decision` (completed interview, no HR decision, not hired/rejected/withdrawn), `hired` (stage `hired`), `decided` (decision set or stage hired/rejected), `hire_rate` (hired / decided × 100, 1 decimal; `null` when nothing is decided)
-- `jobs` (max 6; open first by soonest `closes_on`, then drafts, then closed): `{job_id, title, status, closes_on, auto_invite_on, applicants, avg_match_score, interviewed, hired}`; `auto_invite_on` = `closes_on` + 1 day while auto-invite is enabled and has not run
-- `attention` (max 5): `{kind: "decision", session_id, application_id, candidate_name, job_title, interview_score, completed_at}` (oldest first) and `{kind: "job_closing", job_id, job_title, closes_on, days_left, applicants}` for open jobs closing within 3 days (up to 2 slots reserved)
+- `jobs` (max 6; open first by soonest `closes_on`, then drafts, then closed): `{job_id, title, status, closes_on, closes_time, closes_at, auto_invite_on, auto_invite_at, applicants, avg_match_score, interviewed, hired}`; while auto-invite is enabled and has not run, `auto_invite_at` = the job's `auto_invite.send_at` (ISO, WIB) and `auto_invite_on` its date, else null
+- `attention` (max 5): `{kind: "decision", session_id, application_id, candidate_name, job_title, interview_score, completed_at}` (oldest first) and `{kind: "job_closing", job_id, job_title, closes_on, closes_time, closes_at, days_left, applicants}` for open jobs whose period hasn't closed yet (to the minute) and whose closing day is within 3 days (up to 2 slots reserved)
 - `monthly`: 12 × `{month: "YYYY-MM", applicants, jobs_opened, interviews_completed, hired}`, oldest first, months without activity are 0. Bucketed in SQL by calendar month in the organisation timezone (`TIMEZONE`, default Asia/Jakarta/WIB): applicants by `created_at`; jobs opened by `opens_on` (else `created_at`), excluding drafts and future opening dates; completed AI interview sessions by `completed_at`; hires by `decided_at` where `decision = accepted`.
 
 ## Settings
@@ -184,7 +198,7 @@ Audio: 404 `not_found` (unknown message, another session's message, or a candida
 
 ### Data retention (`ti_settings` key `data_retention`)
 - Rules: `enabled` (default `false`), `months_after_close` (1–36, default 12), `keep_hired` (default `true`). Nothing is ever deleted while `enabled` is false.
-- An application is **eligible** when its job's close date is more than N months ago (strictly before *today − N months*, organisation timezone). Close date = `closes_on`; for a `closed` job the earlier of `closes_on` and the job's last update, or the last update when there is no `closes_on`. Open jobs without a deadline never expire. Hired applications are skipped when `keep_hired`; applications with an AI interview `in_progress` (not expired) are always skipped.
+- An application is **eligible** when its job's close date is more than N months ago (strictly before *today − N months*, organisation timezone). Close date = `closes_on` (whole days; `closes_time` doesn't change eligibility); for a `closed` job the earlier of `closes_on` and the job's last update, or the last update when there is no `closes_on`. Open jobs without a deadline never expire. Hired applications are skipped when `keep_hired`; applications with an AI interview `in_progress` (not expired) are always skipped.
 - Deletion uses the same cascade as `DELETE /applications/{id}` (`services/deletion.py`): documents + stored files, screenings, reviews, stage history, interview sessions/messages/evaluations, email logs. A candidate is deleted once no applications remain.
 - `preview = {eligible_applications, eligible_candidates, next_run_at}`; `eligible_candidates` counts candidates that would be removed completely. `next_run_at` is `null` when retention or the scheduler is off.
 - The in-process scheduler runs it once per day at `RETENTION_HOUR` (default 02:00 WIB). The day is claimed atomically in `ti_settings` (`data_retention_state`), so several API processes never run it twice; the day is claimed even while retention is off, so switching it on waits for the next scheduled run.

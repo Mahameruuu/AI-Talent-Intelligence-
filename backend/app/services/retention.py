@@ -6,7 +6,8 @@ Setting ``data_retention`` in ``ti_settings`` (edited by HR in Settings):
 An application is *eligible* when
 - its job's close date is more than N months ago. The close date is ``closes_on``; for a job with status
   ``closed`` it is the earlier of ``closes_on`` and the job's last update (when it was closed), or the last
-  update alone when there is no ``closes_on``. Open jobs without a deadline never expire;
+  update alone when there is no ``closes_on``. Open jobs without a deadline never expire. Retention counts whole
+  days, so the job's ``closes_time`` doesn't matter: the closing day is the day it closed at any time;
 - it is not hired (when ``keep_hired``);
 - it has no AI interview in progress.
 

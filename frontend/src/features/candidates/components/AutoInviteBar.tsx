@@ -54,9 +54,10 @@ export function AutoInviteBar({ job }: { job: Job }) {
     case "scheduled":
       message = (
         <>
-          AI interview invitations go out automatically on{" "}
-          <span className="font-medium text-slate-900">{formatDateTimeWib(autoInvite.send_at)}</span> to the top{" "}
-          {pluralize(topN, "applicant")}.
+          AI interview invitations go out automatically{" "}
+          {autoInvite.timing === "on_close" ? "right after applications close, on" : "on"}{" "}
+          <span className="font-medium text-slate-900">{formatDateTimeWib(autoInvite.send_at)}</span>
+          {autoInvite.timing === "on_close" ? "," : ""} to the top {pluralize(topN, "applicant")}.
         </>
       );
       break;

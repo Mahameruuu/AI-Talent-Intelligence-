@@ -16,7 +16,7 @@ import { formBuilderPath, useCreateFormAndOpen } from "@/features/application-fo
 import { useSetJobStatus } from "@/hooks/queries/jobs";
 import { getErrorMessage } from "@/services/api-client";
 import type { ApplicationForm, Job } from "@/types/api";
-import { formatDay, formatNumber, formatShortDateTimeWib, pluralize } from "@/utils/format";
+import { formatDayTime, formatNumber, formatShortDateTimeWib, pluralize } from "@/utils/format";
 import { cn } from "@/utils/cn";
 import { EMPLOYMENT_TYPE_LABELS } from "@/utils/labels";
 import { jobMetaLine } from "../job-utils";
@@ -28,7 +28,7 @@ function ApplicationPeriodBadge({ job }: { job: Job }) {
   if (!job.closes_on) return null;
   let badge: { label: string; className: string };
   if (job.application_window === "upcoming") {
-    badge = { label: `Opens ${formatDay(job.opens_on)}`, className: "bg-sky-50 text-sky-700 ring-sky-600/20" };
+    badge = { label: `Opens ${formatDayTime(job.opens_on, job.opens_time)}`, className: "bg-sky-50 text-sky-700 ring-sky-600/20" };
   } else if (job.application_window === "ended") {
     badge = { label: "Ended", className: "bg-slate-100 text-slate-600 ring-slate-500/20" };
   } else if (job.days_left === 0) {
@@ -108,7 +108,7 @@ function ApplicationPeriod({ job }: { job: Job }) {
   }
   return (
     <div className="whitespace-nowrap">
-      <p className="text-sm text-slate-900">Until {formatDay(job.closes_on)}</p>
+      <p className="text-sm text-slate-900">Until {formatDayTime(job.closes_on, job.closes_time)}</p>
       <div className="mt-0.5">
         <ApplicationPeriodBadge job={job} />
       </div>

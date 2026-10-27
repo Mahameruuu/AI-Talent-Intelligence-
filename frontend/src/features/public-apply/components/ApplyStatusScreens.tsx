@@ -2,7 +2,7 @@ import { CalendarClock, CheckCircle2, Hourglass, Link2Off, Loader2, Lock, MailCh
 import { Button } from "@/components/ui";
 import { CandidateLayout } from "@/features/candidate-interview/components/CandidateLayout";
 import { StatusCard } from "@/features/candidate-interview/components/StatusScreens";
-import { formatDay } from "@/utils/format";
+import { formatDayTime } from "@/utils/format";
 import type { ClosedReason } from "../apply-utils";
 
 const SUBTITLE = "Job application";
@@ -59,13 +59,19 @@ export function ApplicationsClosedScreen({
   reason = "closed",
   opensOn,
   closesOn,
+  opensTime,
+  closesTime,
 }: {
   jobTitle?: string;
   companyName?: string;
   reason?: ClosedReason;
   opensOn?: string | null;
   closesOn?: string | null;
+  /** "HH:MM" WIB; shown after the date when set. */
+  opensTime?: string | null;
+  closesTime?: string | null;
 }) {
+  const wib = { suffix: " WIB" };
   const job = jobTitle ? <span className="font-medium text-slate-800">{jobTitle}</span> : "this position";
   if (reason === "not_yet_open") {
     return (
@@ -73,8 +79,10 @@ export function ApplicationsClosedScreen({
         <StatusCard icon={CalendarClock} tone="neutral" title="Applications aren't open yet">
           <p>
             Applications for {job} open on{" "}
-            <span className="font-medium text-slate-800">{opensOn ? formatDay(opensOn) : "a later date"}</span>
-            {closesOn ? <> and close on {formatDay(closesOn)}</> : null}. Please come back then.
+            <span className="font-medium text-slate-800">
+              {opensOn ? formatDayTime(opensOn, opensTime, wib) : "a later date"}
+            </span>
+            {closesOn ? <> and close on {formatDayTime(closesOn, closesTime, wib)}</> : null}. Please come back then.
           </p>
         </StatusCard>
       </CandidateLayout>
@@ -90,7 +98,8 @@ export function ApplicationsClosedScreen({
         <p>
           {reason === "deadline_passed" && closesOn ? (
             <>
-              Applications for {job} closed on <span className="font-medium text-slate-800">{formatDay(closesOn)}</span>.
+              Applications for {job} closed on{" "}
+              <span className="font-medium text-slate-800">{formatDayTime(closesOn, closesTime, wib)}</span>.
             </>
           ) : (
             <>{jobTitle ? <>The {job} position</> : "This position"} is no longer accepting applications.</>

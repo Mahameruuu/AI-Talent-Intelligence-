@@ -1,6 +1,8 @@
 """In-process scheduler for periodic jobs: automatic AI-interview invitations and the daily data retention run.
 
-A single daemon thread ticks every ``AUTO_INVITE_INTERVAL_SECONDS`` (and once shortly after startup). Each job's
+A single daemon thread ticks every ``AUTO_INVITE_INTERVAL_SECONDS`` (default 60, so "on_close" invitations go out
+within about a minute of the closing time; and once shortly after startup). A tick with nothing due costs one
+small query for auto-invite plus an hour check for retention. Each job's
 batch is claimed atomically in the database (``services/auto_invite.claim``), so running several API processes
 never sends a job's invitations twice. Not started in tests, for ``flask`` CLI commands other than ``run``, or when
 ``AUTO_INVITE_ENABLED=false`` and ``RETENTION_SCHEDULER_ENABLED=false``. Data retention
@@ -76,7 +78,7 @@ class Scheduler:
 
     def _loop(self) -> None:
         assert self.app is not None
-        interval = max(10, int(self.app.config.get("AUTO_INVITE_INTERVAL_SECONDS", 300)))
+        interval = max(10, int(self.app.config.get("AUTO_INVITE_INTERVAL_SECONDS", 60)))
         if self._stop.wait(STARTUP_DELAY_SECONDS):
             return
         while not self._stop.is_set():

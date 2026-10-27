@@ -118,7 +118,7 @@ function quickField(template: (typeof QUICK_QUESTIONS)[number]): BuilderFieldVal
 }
 
 export interface FormBuilderProps {
-  job: Pick<Job, "id" | "title" | "status" | "employment_type" | "closes_on">;
+  job: Pick<Job, "id" | "title" | "status" | "employment_type" | "closes_on" | "closes_time">;
   form: ApplicationForm;
 }
 

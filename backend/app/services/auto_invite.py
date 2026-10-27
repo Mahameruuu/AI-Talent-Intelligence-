@@ -1,7 +1,8 @@
 """Automatic AI-interview invitations, sent after a job's application period has closed.
 
-Rules (editable per job): at ``AUTO_INVITE_HOUR`` (default 08:00, organisation timezone, WIB) on the day after
-``closes_on``, the top N screened applicants by match score (optionally above a minimum score) are moved to
+Rules (editable per job): when the application period has closed — by default (timing ``next_morning``) at
+``AUTO_INVITE_HOUR`` (default 08:00, organisation timezone, WIB) on the day after ``closes_on``, or with timing
+``on_close`` right after the closing moment (``closes_on closes_time``, see ``job_period``) — the top N screened applicants by match score (optionally above a minimum score) are moved to
 ``shortlisted`` and invited with the job's approved interview template, using the same code path as the HR bulk
 invite. Applicants who failed a must-have (knockout) screening question, who are not screened yet, or who already
 have an interview session are skipped. A job is sent at most once automatically; HR can always invite manually
@@ -17,11 +18,11 @@ from datetime import datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from flask import current_app
-from sqlalchemy import or_, update
+from sqlalchemy import and_, or_, update
 
 from ..extensions import db
 from ..models import Application, Document, InterviewSession, InterviewTemplate, Job, StageHistory
-from . import audit
+from . import audit, job_period
 
 log = logging.getLogger(__name__)
 
@@ -33,6 +34,7 @@ PROCESSING_GRACE = timedelta(hours=2)
 CLAIM_TTL = timedelta(minutes=30)
 AUTO_NOTE = "Shortlisted automatically after applications closed."
 MANUAL_NOTE = "Shortlisted by auto-invite (Send now)."
+TIMINGS = ("next_morning", "on_close")
 SKIP_KEYS = ("knockout", "below_min_score", "not_screened", "already_invited", "beyond_top_n")
 
 
@@ -48,10 +50,14 @@ def now_local() -> datetime:
     return datetime.now(_tz())
 
 
-def send_at(job: Job) -> datetime | None:
-    """closes_on + 1 day at AUTO_INVITE_HOUR in the organisation timezone (None without a deadline)."""
+def send_at(job) -> datetime | None:
+    """When the invitations are due (None without a deadline), in the organisation timezone:
+    ``next_morning`` → closes_on + 1 day at AUTO_INVITE_HOUR; ``on_close`` → the moment applications close.
+    Accepts a Job or a SQL row with closes_on/closes_time/auto_invite_timing."""
     if job.closes_on is None:
         return None
+    if getattr(job, "auto_invite_timing", None) == "on_close":
+        return job_period.deadline(job)
     return datetime.combine(job.closes_on + timedelta(days=1), time(hour=current_app.config["AUTO_INVITE_HOUR"]),
                             tzinfo=_tz())
 
@@ -88,6 +94,7 @@ def summary(job: Job) -> dict:
         "enabled": bool(job.auto_invite_enabled),
         "top_n": job.auto_invite_top_n,
         "min_score": job.auto_invite_min_score,
+        "timing": job.auto_invite_timing or "next_morning",
         "send_at": when.isoformat() if when else None,
         "status": status(job, template, template_known=True),
         "template_id": result.get("template_id") if ran else (template.id if template else None),
@@ -250,12 +257,18 @@ def process_due(job: Job, now: datetime) -> str:
 
 
 def tick(now: datetime | None = None) -> dict[int, str]:
-    """Process every job whose auto-invite is due. Never raises."""
+    """Process every job whose auto-invite is due. Never raises.
+
+    Cheap when nothing is due: one indexed query returns only enabled, unsent jobs whose closing day has been
+    reached (``on_close``) or passed (``next_morning``); usually none."""
     now = now or now_local()
+    today = now.astimezone(_tz()).date()
     outcomes: dict[int, str] = {}
     try:
         jobs = (Job.query.filter(Job.auto_invite_enabled.is_(True), Job.closes_on.isnot(None),
-                                 Job.auto_invite_ran_at.is_(None), Job.closes_on < now.astimezone(_tz()).date())
+                                 Job.auto_invite_ran_at.is_(None),
+                                 or_(Job.closes_on < today,
+                                     and_(Job.auto_invite_timing == "on_close", Job.closes_on == today)))
                 .order_by(Job.closes_on, Job.id).all())
         job_ids = [j.id for j in jobs]
     except Exception:

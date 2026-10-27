@@ -47,6 +47,10 @@ def job(j: Job, candidate_count: int | None = None) -> dict:
         "salary_visible": j.salary_visible,
         "opens_on": j.opens_on.isoformat() if j.opens_on else None,
         "closes_on": j.closes_on.isoformat() if j.closes_on else None,
+        "opens_time": job_period.hhmm(j.opens_time),
+        "closes_time": job_period.hhmm(j.closes_time),
+        "opens_at": job_period.iso(job_period.opens_at(j)),
+        "closes_at": job_period.iso(job_period.closes_at(j)),
         "application_window": job_period.window(j),
         "days_left": job_period.days_left(j),
         # Organisation-wide weights (Settings), identical for every job.

@@ -1,5 +1,5 @@
-import type { Job, JobStatus, ScoringWeights } from "@/types/api";
-import { formatDay } from "@/utils/format";
+import type { AutoInviteTiming, Job, JobStatus, ScoringWeights } from "@/types/api";
+import { addCalendarDays, formatClock, formatDayTime } from "@/utils/format";
 import { EMPLOYMENT_TYPE_LABELS, WEIGHT_KEYS } from "@/utils/labels";
 
 export const JOB_STATUSES: JobStatus[] = ["draft", "open", "closed"];
@@ -58,11 +58,35 @@ export function jobMetaLine(job: Pick<Job, "department" | "location">): string {
   return [job.department, job.location].filter((part): part is string => Boolean(part && part.trim())).join(" · ");
 }
 
-/** "Data Scientist · Full-time · until 30 Nov 2026" (subtitle of the application form). */
-export function jobSubtitle(job: Pick<Job, "title" | "employment_type" | "closes_on">): string {
+/**
+ * "Data Scientist · Full-time · until 30 Nov 2026, 14:00 WIB" (subtitle of the application form);
+ * the time is left out when the job closes at the end of the day.
+ */
+export function jobSubtitle(job: Pick<Job, "title" | "employment_type" | "closes_on"> & { closes_time?: string | null }): string {
   const parts = [job.title, EMPLOYMENT_TYPE_LABELS[job.employment_type]];
-  if (job.closes_on) parts.push(`until ${formatDay(job.closes_on)}`);
+  if (job.closes_on) parts.push(`until ${formatDayTime(job.closes_on, job.closes_time, { suffix: " WIB" })}`);
   return parts.filter(Boolean).join(" · ");
+}
+
+/** Hour of the "next morning" invitations (backend AUTO_INVITE_HOUR). */
+export const AUTO_INVITE_MORNING = "08:00";
+
+/**
+ * When automatic invitations go out, as a WIB calendar day + "HH:MM" (mirrors the backend `send_at`):
+ * next_morning → the day after closing at 08:00; on_close → the closing time, or 00:00 the next day
+ * when the job closes at the end of the day. Null without a valid closing day.
+ */
+export function autoInviteSendMoment(
+  closesOn: string | null | undefined,
+  closesTime: string | null | undefined,
+  timing: AutoInviteTiming,
+): { day: string; time: string } | null {
+  if (!closesOn) return null;
+  const clock = formatClock(closesTime);
+  if (timing === "on_close" && clock) return { day: closesOn, time: clock };
+  const nextDay = addCalendarDays(closesOn, 1);
+  if (!nextDay) return null;
+  return { day: nextDay, time: timing === "on_close" ? "00:00" : AUTO_INVITE_MORNING };
 }
 
 /** Human-readable lines from an API error's `details` (e.g. field validation messages). */

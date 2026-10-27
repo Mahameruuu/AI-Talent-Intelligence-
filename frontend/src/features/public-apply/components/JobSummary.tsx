@@ -3,7 +3,7 @@ import { useId, useState, type ReactNode } from "react";
 import { Chip } from "@/components/ui";
 import type { PublicApplicationForm } from "@/types/api";
 import { cn } from "@/utils/cn";
-import { formatDateTime, formatDay, formatSalaryRange } from "@/utils/format";
+import { formatDateTime, formatDayTime, formatSalaryRange } from "@/utils/format";
 import { EMPLOYMENT_TYPE_LABELS } from "@/utils/labels";
 
 /** Descriptions longer than this are collapsed behind "Show more". */
@@ -65,7 +65,7 @@ export function JobSummary({ form }: { form: PublicApplicationForm }) {
           </Meta>
         ) : null}
         {job.closes_on ? (
-          <Meta icon={<CalendarClock />}>Apply by {formatDay(job.closes_on)}</Meta>
+          <Meta icon={<CalendarClock />}>Apply by {formatDayTime(job.closes_on, job.closes_time, { suffix: " WIB" })}</Meta>
         ) : form.closes_at ? (
           <Meta icon={<CalendarClock />}>Apply by {formatDateTime(form.closes_at)}</Meta>
         ) : null}

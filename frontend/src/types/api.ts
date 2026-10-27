@@ -50,7 +50,13 @@ export interface AutoInviteSkipped {
 }
 
 /**
- * Automatic AI-interview invitations: sent the day after applications close (08:00 WIB)
+ * When automatic invitations go out: `next_morning` = 08:00 WIB the day after applications close (default);
+ * `on_close` = right after the closing moment (closes_on + closes_time).
+ */
+export type AutoInviteTiming = "next_morning" | "on_close";
+
+/**
+ * Automatic AI-interview invitations: sent after applications close (see `timing`)
  * to the top N screened applicants, using the job's approved interview template.
  */
 export interface AutoInvite {
@@ -59,7 +65,11 @@ export interface AutoInvite {
   top_n: number;
   /** 0..100; null = no minimum. */
   min_score: number | null;
-  /** closes_on + 1 day at 08:00 WIB (+07:00); null without a deadline. */
+  timing: AutoInviteTiming;
+  /**
+   * next_morning: closes_on + 1 day at 08:00 WIB; on_close: the closing moment (00:00 the next day without
+   * closes_time). ISO with +07:00; null without a deadline.
+   */
   send_at: ISODateString | null;
   status: AutoInviteStatus;
   template_id: number | null;
@@ -75,6 +85,7 @@ export interface AutoInviteInput {
   enabled?: boolean;
   top_n?: number;
   min_score?: number | null;
+  timing?: AutoInviteTiming;
 }
 
 export interface Job {
@@ -96,12 +107,19 @@ export interface Job {
   salary_max: number | null;
   /** Show the salary range to applicants on the public application page. */
   salary_visible: boolean;
-  /** Application period (inclusive, organisation timezone). "YYYY-MM-DD"; null = no limit. */
+  /** Application period (organisation timezone, WIB). "YYYY-MM-DD"; null = no limit. */
   opens_on: string | null;
-  closes_on: string | null; // deadline
-  /** Computed by the server from today's date. Null when the job has no period. */
+  closes_on: string | null; // deadline day
+  /** "HH:MM" WIB. Opens at opens_on opens_time (00:00 when null). */
+  opens_time: string | null;
+  /** "HH:MM" WIB. Closed from this minute on closes_on; null = open the whole closing day (until 23:59). */
+  closes_time: string | null;
+  /** Computed opening / closing moments (ISO, +07:00); closes_at is …T23:59:59 without a time; null without a date. */
+  opens_at: ISODateString | null;
+  closes_at: ISODateString | null;
+  /** Computed by the server from the current time. Null when the job has no period. */
   application_window: "upcoming" | "open" | "ended" | null;
-  /** Days until the deadline (0 = closes today); null without a deadline or after it. */
+  /** Calendar days until the closing day (0 = closes today); null without a deadline or once closed. */
   days_left: number | null;
   weights: ScoringWeights;
   auto_invite: AutoInvite;
@@ -122,6 +140,8 @@ export type JobInput = Omit<
   | "weights"
   | "application_window"
   | "days_left"
+  | "opens_at"
+  | "closes_at"
   | "auto_invite"
 > & { weights?: Partial<ScoringWeights>; auto_invite?: AutoInviteInput };
 
@@ -702,8 +722,14 @@ export interface DashboardJobRow {
   status: JobStatus;
   /** "YYYY-MM-DD" */
   closes_on: string | null;
+  /** "HH:MM" WIB or null (open the whole closing day). */
+  closes_time: string | null;
+  /** ISO (+07:00); …T23:59:59 without a closing time. */
+  closes_at: ISODateString | null;
   /** "YYYY-MM-DD": day the top candidates are invited to the AI interview (null when not scheduled). */
   auto_invite_on: string | null;
+  /** ISO (+07:00): when the invitations are sent (the job's auto_invite.send_at); null when not scheduled. */
+  auto_invite_at: ISODateString | null;
   applicants: number;
   avg_match_score: number | null;
   interviewed: number;
@@ -726,6 +752,9 @@ export interface DashboardClosingJobItem {
   job_title: string;
   /** "YYYY-MM-DD" */
   closes_on: string;
+  /** "HH:MM" WIB or null (whole day). */
+  closes_time: string | null;
+  closes_at: ISODateString | null;
   days_left: number;
   applicants: number;
 }
@@ -916,6 +945,11 @@ export interface ApplicationForm {
   /** The job's application period ("YYYY-MM-DD"), which is the deadline applicants see. */
   job_opens_on: string | null;
   job_closes_on: string | null;
+  /** "HH:MM" WIB or null. */
+  job_opens_time: string | null;
+  job_closes_time: string | null;
+  job_opens_at: ISODateString | null;
+  job_closes_at: ISODateString | null;
   closes_at: ISODateString | null;
   published_at: ISODateString | null;
   submission_count: number;
@@ -945,6 +979,11 @@ export interface PublicApplicationForm {
     min_experience_years: number | null;
     opens_on: string | null;
     closes_on: string | null;
+    /** "HH:MM" WIB; null = 00:00 (opens) / end of the day (closes). */
+    opens_time: string | null;
+    closes_time: string | null;
+    opens_at: ISODateString | null;
+    closes_at: ISODateString | null;
     employment_type: EmploymentType;
     /** Only present (non-null) when HR chose to show the salary. */
     salary_min: number | null;

@@ -3,9 +3,9 @@ import { Bot, Briefcase, CalendarClock, CheckCircle2, FileText, GraduationCap, S
 import { useId, type ReactNode } from "react";
 import { Controller, useForm, useWatch } from "react-hook-form";
 import { Button, Card, CardContent, Checkbox, FormField, Input, Select, Switch, TagInput, Textarea } from "@/components/ui";
-import type { Job, JobInput } from "@/types/api";
+import type { AutoInviteTiming, Job, JobInput } from "@/types/api";
 import { cn } from "@/utils/cn";
-import { addCalendarDays, daysBetween, formatDateWib, formatDay, formatDayWithWeekday, pluralize } from "@/utils/format";
+import { daysBetween, formatClock, formatDateWib, formatDay, formatDayWithWeekday, pluralize } from "@/utils/format";
 import {
   EDUCATION_LABELS,
   EDUCATION_LEVELS,
@@ -13,7 +13,7 @@ import {
   EMPLOYMENT_TYPES,
   JOB_STATUS_LABELS,
 } from "@/utils/labels";
-import { JOB_STATUSES } from "../job-utils";
+import { AUTO_INVITE_MORNING, autoInviteSendMoment, JOB_STATUSES } from "../job-utils";
 import { jobFormSchema, toFormValues, toJobInput, toNullableNumber, type JobFormValues } from "./job-form-schema";
 import { RupiahInput } from "./RupiahInput";
 
@@ -32,6 +32,15 @@ const STATUS_HINTS = {
 } as const;
 
 const MIN_DESCRIPTION = 10;
+
+const TIMING_OPTIONS: { value: AutoInviteTiming; label: string; hint: string }[] = [
+  { value: "next_morning", label: `Next morning at ${AUTO_INVITE_MORNING} WIB`, hint: "The day after applications close." },
+  {
+    value: "on_close",
+    label: "Right after applications close",
+    hint: "Within about a minute of the closing time — handy for a quick test.",
+  },
+];
 
 /** Numbered section card so the form reads as a short series of steps. */
 function Step({
@@ -69,8 +78,18 @@ function Step({
   );
 }
 
-/** When the automatic invitations go out (or went out), computed live from the deadline field. */
-function AutoInviteSchedule({ job, closesOn }: { job: Job | undefined; closesOn: string | undefined }) {
+/** When the automatic invitations go out (or went out), computed live from the deadline and timing fields. */
+function AutoInviteSchedule({
+  job,
+  closesOn,
+  closesTime,
+  timing,
+}: {
+  job: Job | undefined;
+  closesOn: string | undefined;
+  closesTime: string | undefined;
+  timing: AutoInviteTiming;
+}) {
   const autoInvite = job?.auto_invite;
   if (autoInvite?.status === "sent") {
     return (
@@ -82,8 +101,8 @@ function AutoInviteSchedule({ job, closesOn }: { job: Job | undefined; closesOn:
       </p>
     );
   }
-  const sendDay = closesOn ? addCalendarDays(closesOn, 1) : null;
-  if (!sendDay) {
+  const send = autoInviteSendMoment(closesOn, closesTime, timing);
+  if (!send) {
     return (
       <p className="flex items-start gap-2 text-sm text-amber-800">
         <TriangleAlert className="mt-0.5 size-4 shrink-0 text-amber-600" aria-hidden />
@@ -95,8 +114,11 @@ function AutoInviteSchedule({ job, closesOn }: { job: Job | undefined; closesOn:
     <p className="flex items-start gap-2 text-sm text-slate-700">
       <CalendarClock className="mt-0.5 size-4 shrink-0 text-indigo-600" aria-hidden />
       <span>
-        Invitations are emailed on <span className="font-medium text-slate-900">{formatDayWithWeekday(sendDay)} at 08:00 WIB</span>{" "}
-        — the day after applications close.
+        Invitations are emailed on{" "}
+        <span className="font-medium text-slate-900">
+          {formatDayWithWeekday(send.day)} at {send.time} WIB
+        </span>{" "}
+        — {timing === "on_close" ? "right after applications close" : "the day after applications close"}.
       </span>
     </p>
   );
@@ -118,10 +140,22 @@ export function JobForm({ defaultValues, onSubmit, submitting = false, mode, onC
   const fieldId = (name: string) => `${baseId}-${name}`;
   const busy = submitting || isSubmitting;
 
-  const [title, status, description, requiredSkills, opensOn, closesOn, autoInviteEnabled] = useWatch({
-    control,
-    name: ["title", "status", "description", "required_skills", "opens_on", "closes_on", "auto_invite_enabled"],
-  });
+  const [title, status, description, requiredSkills, opensOn, closesOn, closesTime, autoInviteEnabled, autoInviteTiming] =
+    useWatch({
+      control,
+      name: [
+        "title",
+        "status",
+        "description",
+        "required_skills",
+        "opens_on",
+        "closes_on",
+        "closes_time",
+        "auto_invite_enabled",
+        "auto_invite_timing",
+      ],
+    });
+  const closingClock = formatClock(closesTime) ?? "23:59";
   const periodDays = opensOn && closesOn && closesOn >= opensOn ? daysBetween(opensOn, closesOn) + 1 : null;
   const descriptionLength = (description ?? "").trim().length;
   const checklist = {
@@ -292,38 +326,79 @@ export function JobForm({ defaultValues, onSubmit, submitting = false, mode, onC
                   </p>
                 ) : null}
               </fieldset>
-              <FormField
-                label="Applications open on"
-                htmlFor={fieldId("opens_on")}
-                required
-                error={errors.opens_on?.message}
-              >
-                <Input
-                  id={fieldId("opens_on")}
-                  type="date"
-                  aria-invalid={errors.opens_on ? true : undefined}
-                  {...register("opens_on", { deps: ["closes_on"] })}
-                />
-              </FormField>
-              <FormField
-                label="Application deadline"
-                htmlFor={fieldId("closes_on")}
-                required
-                error={errors.closes_on?.message}
-                hint={
-                  periodDays !== null && closesOn
-                    ? `Open for ${periodDays} day${periodDays === 1 ? "" : "s"} · applications accepted until 23:59 WIB on ${formatDay(closesOn)}.`
-                    : "Last day candidates can apply."
-                }
-              >
-                <Input
-                  id={fieldId("closes_on")}
-                  type="date"
-                  min={opensOn || undefined}
-                  aria-invalid={errors.closes_on ? true : undefined}
-                  {...register("closes_on")}
-                />
-              </FormField>
+              <div className="space-y-1.5 sm:col-span-2 lg:col-span-1">
+                <div className="grid grid-cols-[minmax(0,1fr)_8.5rem] gap-3">
+                  <FormField
+                    label="Applications open on"
+                    htmlFor={fieldId("opens_on")}
+                    required
+                    error={errors.opens_on?.message}
+                  >
+                    <Input
+                      id={fieldId("opens_on")}
+                      type="date"
+                      aria-invalid={errors.opens_on ? true : undefined}
+                      {...register("opens_on", { deps: ["closes_on", "closes_time"] })}
+                    />
+                  </FormField>
+                  <FormField label="Time (WIB)" htmlFor={fieldId("opens_time")} error={errors.opens_time?.message}>
+                    <Input
+                      id={fieldId("opens_time")}
+                      type="time"
+                      aria-label="Opening time (WIB)"
+                      placeholder="00:00"
+                      aria-describedby={fieldId("opens_time-hint")}
+                      aria-invalid={errors.opens_time ? true : undefined}
+                      className="tabular-nums"
+                      {...register("opens_time", { deps: ["closes_time"] })}
+                    />
+                  </FormField>
+                </div>
+                <p id={fieldId("opens_time-hint")} className="text-xs text-slate-500">
+                  Time is optional — empty means 00:00.
+                </p>
+              </div>
+              <div className="space-y-1.5 sm:col-span-2 lg:col-span-1">
+                <div className="grid grid-cols-[minmax(0,1fr)_8.5rem] gap-3">
+                  <FormField
+                    label="Application deadline"
+                    htmlFor={fieldId("closes_on")}
+                    required
+                    error={errors.closes_on?.message}
+                  >
+                    <Input
+                      id={fieldId("closes_on")}
+                      type="date"
+                      min={opensOn || undefined}
+                      aria-invalid={errors.closes_on ? true : undefined}
+                      {...register("closes_on", { deps: ["closes_time"] })}
+                    />
+                  </FormField>
+                  <FormField label="Time (WIB)" htmlFor={fieldId("closes_time")}>
+                    <Input
+                      id={fieldId("closes_time")}
+                      type="time"
+                      aria-label="Closing time (WIB)"
+                      placeholder="23:59"
+                      aria-describedby={fieldId("closes_time-hint")}
+                      aria-invalid={errors.closes_time ? true : undefined}
+                      className="tabular-nums"
+                      {...register("closes_time")}
+                    />
+                  </FormField>
+                </div>
+                {errors.closes_time?.message ? (
+                  <p id={fieldId("closes_time-hint")} className="text-xs font-medium text-rose-600" role="alert">
+                    {errors.closes_time.message}
+                  </p>
+                ) : (
+                  <p id={fieldId("closes_time-hint")} className="text-xs text-slate-500">
+                    {periodDays !== null && closesOn
+                      ? `Open for ${periodDays} day${periodDays === 1 ? "" : "s"} · applications accepted until ${closingClock} WIB on ${formatDay(closesOn)}.`
+                      : "Last day candidates can apply. Time is optional — empty means 23:59."}
+                  </p>
+                )}
+              </div>
             </div>
           </Step>
 
@@ -555,7 +630,44 @@ export function JobForm({ defaultValues, onSubmit, submitting = false, mode, onC
                       />
                     </FormField>
                   </div>
-                  <AutoInviteSchedule job={defaultValues} closesOn={closesOn} />
+                  <fieldset>
+                    <legend className="mb-2 text-sm font-medium text-slate-700">Send invitations</legend>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      {TIMING_OPTIONS.map((option) => {
+                        const checked = autoInviteTiming === option.value;
+                        const inputId = fieldId(`timing-${option.value}`);
+                        return (
+                          <label
+                            key={option.value}
+                            htmlFor={inputId}
+                            className={cn(
+                              "flex cursor-pointer items-start gap-3 rounded-lg border px-4 py-3 transition-colors",
+                              "has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-indigo-500/50",
+                              checked ? "border-indigo-500 bg-indigo-50/60" : "border-slate-200 bg-white hover:border-slate-300",
+                            )}
+                          >
+                            <input
+                              id={inputId}
+                              type="radio"
+                              value={option.value}
+                              className="mt-0.5 size-4 shrink-0 accent-indigo-600"
+                              {...register("auto_invite_timing")}
+                            />
+                            <span className="min-w-0">
+                              <span className="block text-sm font-medium text-slate-900">{option.label}</span>
+                              <span className="block text-xs text-slate-500">{option.hint}</span>
+                            </span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </fieldset>
+                  <AutoInviteSchedule
+                    job={defaultValues}
+                    closesOn={closesOn}
+                    closesTime={closesTime}
+                    timing={autoInviteTiming ?? "next_morning"}
+                  />
                   <p className="text-xs text-slate-500">
                     Applicants who don't meet a must-have question are not invited automatically. You can still invite
                     anyone manually.

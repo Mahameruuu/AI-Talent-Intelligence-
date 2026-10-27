@@ -76,11 +76,12 @@ class Config:
     WORKER_MAX_WORKERS = int(os.getenv("WORKER_MAX_WORKERS", "2"))
     # Run background jobs inline (used by tests for determinism).
     WORKER_INLINE = False
-    # Automatic AI-interview invitations: sent at AUTO_INVITE_HOUR (local TIMEZONE) on the day after a job's
-    # closes_on. The in-process scheduler checks every AUTO_INVITE_INTERVAL_SECONDS.
+    # Automatic AI-interview invitations: per job either at AUTO_INVITE_HOUR (local TIMEZONE) on the day after
+    # closes_on ("next_morning") or right after the closing moment ("on_close"). The in-process scheduler checks
+    # every AUTO_INVITE_INTERVAL_SECONDS (a tick with nothing due is a single small query).
     AUTO_INVITE_ENABLED = _bool("AUTO_INVITE_ENABLED", True)
     AUTO_INVITE_HOUR = int(os.getenv("AUTO_INVITE_HOUR", "8"))
-    AUTO_INVITE_INTERVAL_SECONDS = int(os.getenv("AUTO_INVITE_INTERVAL_SECONDS", "300"))
+    AUTO_INVITE_INTERVAL_SECONDS = int(os.getenv("AUTO_INVITE_INTERVAL_SECONDS", "60"))
 
     # Data retention (rules are set by HR in Settings): the scheduler applies them once a day at
     # RETENTION_HOUR (local TIMEZONE). RETENTION_SCHEDULER_ENABLED=false stops only the daily run.

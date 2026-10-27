@@ -64,7 +64,8 @@ def get_job(client, hr, job_id):
 
 def test_defaults_send_at_and_status_values(client, hr, job):
     ai = job["auto_invite"]
-    assert ai == {"enabled": True, "top_n": 10, "min_score": None, "send_at": None, "status": "no_deadline",
+    assert ai == {"enabled": True, "top_n": 10, "min_score": None, "timing": "next_morning", "send_at": None,
+                  "status": "no_deadline",
                   "template_id": None, "template_name": None, "ran_at": None, "invited_count": None,
                   "skipped": None, "error": None}
     ai = set_period(client, hr, job["id"])["auto_invite"]
@@ -237,3 +238,64 @@ def test_manual_run_endpoint(client, hr, job):
     assert again["auto_invite"]["invited_count"] == 1 and again["auto_invite"]["skipped"]["already_invited"] == 1
     with client.application.app_context():
         assert sorted(s.application_id for s in InterviewSession.query.all()) == sorted(ids)
+
+
+def test_send_at_for_both_timings(client, hr, job):
+    jid = job["id"]
+    res = client.patch(f"{API}/jobs/{jid}", headers=hr, json={"opens_on": "2026-10-26", "closes_on": "2026-10-27",
+                                                              "closes_time": "14:00"}).json
+    assert res["auto_invite"]["timing"] == "next_morning"
+    assert res["auto_invite"]["send_at"] == "2026-10-28T08:00:00+07:00"  # unchanged by closes_time
+    res = client.patch(f"{API}/jobs/{jid}", headers=hr, json={"auto_invite": {"timing": "on_close"}}).json
+    assert res["auto_invite"]["timing"] == "on_close" and res["auto_invite"]["send_at"] == "2026-10-27T14:00:00+07:00"
+    assert res["auto_invite"]["top_n"] == 10  # other keys untouched
+    # Without a closing time the period lasts the whole day: sent at midnight.
+    res = client.patch(f"{API}/jobs/{jid}", headers=hr, json={"closes_time": None}).json
+    assert res["auto_invite"]["send_at"] == "2026-10-28T00:00:00+07:00"
+    bad = client.patch(f"{API}/jobs/{jid}", headers=hr, json={"auto_invite": {"timing": "whenever"}})
+    assert bad.status_code == 400 and bad.json["error"]["details"][0]["field"] == "auto_invite.timing"
+    created = client.post(f"{API}/jobs", headers=hr, json={
+        "title": "Analyst", "description": "Analyse data with SQL and Python.", "closes_on": "2026-12-01",
+        "closes_time": "09:30", "auto_invite": {"timing": "on_close"}}).json
+    assert created["auto_invite"]["send_at"] == "2026-12-01T09:30:00+07:00"
+
+
+def test_scheduler_sends_on_close_right_after_closing_time(client, hr, job):
+    jid = job["id"]
+    res = client.patch(f"{API}/jobs/{jid}", headers=hr, json={
+        "opens_on": "2026-10-26", "closes_on": "2026-10-27", "closes_time": "14:00",
+        "auto_invite": {"timing": "on_close", "top_n": 1}})
+    assert res.status_code == 200, res.json
+    approve_template(client, hr, jid)
+    ids = setup_pool(client, hr, jid, [70, 90])
+
+    assert tick(client, wib(2026, 10, 26, 23, 0)) == {}  # closing day not reached: not even loaded
+    assert tick(client, wib(2026, 10, 27, 13, 59)) == {jid: "not_due"}  # applications still open
+    with client.application.app_context():
+        assert InterviewSession.query.count() == 0
+    assert tick(client, wib(2026, 10, 27, 14, 0)) == {jid: "sent"}  # first tick after closing
+    with client.application.app_context():
+        assert [s.application_id for s in InterviewSession.query.all()] == [ids[1]]
+    assert get_job(client, hr, jid)["auto_invite"]["status"] == "sent"
+    assert tick(client, wib(2026, 10, 27, 14, 1)) == {}  # never twice
+
+
+def test_on_close_still_waits_for_cvs_processing(client, hr, job):
+    jid = job["id"]
+    client.patch(f"{API}/jobs/{jid}", headers=hr, json={
+        "closes_on": "2026-10-27", "closes_time": "14:00", "auto_invite": {"timing": "on_close"}})
+    approve_template(client, hr, jid)
+    ids = setup_pool(client, hr, jid, [80, 70])
+    with client.application.app_context():
+        Document.query.filter_by(application_id=ids[1]).first().status = "processing"
+        db.session.commit()
+    assert tick(client, wib(2026, 10, 27, 14, 1)) == {jid: "waiting_documents"}
+    assert tick(client, wib(2026, 10, 27, 16, 0)) == {jid: "sent"}  # max 2 hours after send_at
+
+
+def test_next_morning_job_not_loaded_on_closing_day(client, hr, job):
+    jid = job["id"]
+    client.patch(f"{API}/jobs/{jid}", headers=hr, json={"closes_on": "2026-10-27", "closes_time": "10:00"})
+    approve_template(client, hr, jid)
+    assert tick(client, wib(2026, 10, 27, 23, 0)) == {}
+    assert tick(client, wib(2026, 10, 28, 7, 59)) == {jid: "not_due"}

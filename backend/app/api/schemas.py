@@ -32,6 +32,9 @@ AutoInviteInput = api.model("AutoInviteInput", {
     "enabled": fields.Boolean(example=True, description="Send AI interview invitations automatically"),
     "top_n": fields.Integer(example=10, min=1, max=100, description="Invite the N best-matching screened applicants"),
     "min_score": fields.Float(example=60, min=0, max=100, description="Optional minimum match score (null = none)"),
+    "timing": fields.String(enum=["next_morning", "on_close"], example="next_morning",
+                            description="next_morning: 08:00 WIB the day after closes_on (default); "
+                                        "on_close: right after applications close"),
 })
 AutoInviteSkipped = api.model("AutoInviteSkipped", {
     "knockout": fields.Integer(example=2), "below_min_score": fields.Integer(example=1),
@@ -42,8 +45,11 @@ AutoInvite = api.model("AutoInvite", {
     "enabled": fields.Boolean(example=True),
     "top_n": fields.Integer(example=10),
     "min_score": fields.Float(example=None),
+    "timing": fields.String(enum=["next_morning", "on_close"], example="next_morning"),
     "send_at": fields.String(example="2026-10-31T08:00:00+07:00",
-                             description="closes_on + 1 day at AUTO_INVITE_HOUR (WIB); null without a deadline"),
+                             description="next_morning: closes_on + 1 day at AUTO_INVITE_HOUR (WIB); on_close: the "
+                                         "closing moment (closes_at, or 00:00 the next day without closes_time); "
+                                         "null without a deadline"),
     "status": fields.String(enum=["disabled", "no_deadline", "waiting_template", "scheduled", "sent", "failed"],
                             example="scheduled"),
     "template_id": fields.Integer(example=3), "template_name": fields.String(example="Data Scientist interview"),
@@ -65,7 +71,12 @@ JobInput = api.model("JobInput", {
     "salary_max": fields.Integer(example=18000000, description="Monthly, IDR (optional)"),
     "salary_visible": fields.Boolean(example=True, description="Show the salary range to applicants"),
     "opens_on": fields.Date(example="2026-11-01", description="First day applications are accepted"),
-    "closes_on": fields.Date(example="2026-11-30", description="Deadline (inclusive, until 23:59 WIB)"),
+    "closes_on": fields.Date(example="2026-11-30", description="Deadline day (inclusive, until closes_time WIB)"),
+    "opens_time": fields.String(example="09:00", pattern=r"^\d{2}:\d{2}$",
+                                description="Opening time on opens_on, HH:MM WIB (null = 00:00)"),
+    "closes_time": fields.String(example="17:00", pattern=r"^\d{2}:\d{2}$",
+                                 description="Closing time on closes_on, HH:MM WIB; closed from this minute on "
+                                             "(null = end of the day, 23:59)"),
     "education_level": fields.String(enum=["none", "high_school", "diploma", "bachelor", "master", "doctorate"], example="bachelor"),
     "education_field": fields.String(example="Statistics, Computer Science or related"),
     "required_certifications": fields.List(fields.String, example=[]),
@@ -76,9 +87,14 @@ JobInput = api.model("JobInput", {
 Job = api.inherit("Job", JobInput, {
     "auto_invite": fields.Nested(AutoInvite),
     "id": fields.Integer(example=1),
+    "opens_at": fields.String(example="2026-11-01T09:00:00+07:00",
+                              description="opens_on + opens_time (WIB, ISO 8601); null without opens_on"),
+    "closes_at": fields.String(example="2026-11-30T17:00:00+07:00",
+                               description="closes_on + closes_time, or 23:59:59 without a time (WIB, ISO 8601); "
+                                           "null without closes_on"),
     "application_window": fields.String(enum=["upcoming", "open", "ended"], example="open",
                                         description="Null when the job has no period"),
-    "days_left": fields.Integer(example=12, description="Days until the deadline (0 = today); null after it"),
+    "days_left": fields.Integer(example=12, description="Calendar days until the closing day (0 = closes today); null once closed"),
     "is_demo": fields.Boolean(example=False),
     "candidate_count": fields.Integer(example=12),
     "created_at": fields.DateTime(),

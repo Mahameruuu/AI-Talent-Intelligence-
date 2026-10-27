@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from datetime import date
+import re
+from datetime import date, time
+from types import SimpleNamespace
 from typing import Literal
 
 from flask import request
@@ -11,7 +13,7 @@ from sqlalchemy import delete, func, or_
 from ..extensions import db
 from ..models import Application, InterviewTemplate, Job, JobCompetency
 from ..security import current_actor, hr_endpoint
-from ..services import audit, auto_invite, deletion, serializers
+from ..services import audit, auto_invite, deletion, job_period, serializers
 from ..errors import bad_request, conflict, not_found
 from . import schemas as s
 from .common import float_arg, page_parser, paginate, pagination_args, parse_body
@@ -20,6 +22,8 @@ ns = Namespace("Jobs", description="Job openings and their screening criteria", 
 
 EducationLevel = Literal["none", "high_school", "diploma", "bachelor", "master", "doctorate"]
 EmploymentType = Literal["full_time", "part_time", "contract", "internship", "freelance"]
+InviteTiming = Literal["next_morning", "on_close"]
+_HHMM = re.compile(r"^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$")
 
 
 def _clean_list(values: list[str]) -> list[str]:
@@ -45,6 +49,8 @@ class AutoInviteIn(BaseModel):
     enabled: bool | None = None
     top_n: int | None = Field(default=None, ge=1, le=100)
     min_score: float | None = Field(default=None, ge=0, le=100)
+    # next_morning: AUTO_INVITE_HOUR (08:00 WIB) the day after closes_on; on_close: right after applications close.
+    timing: InviteTiming | None = None
 
 
 class JobIn(BaseModel):
@@ -60,9 +66,12 @@ class JobIn(BaseModel):
     salary_min: int | None = Field(default=None, ge=0, le=10_000_000_000)
     salary_max: int | None = Field(default=None, ge=0, le=10_000_000_000)
     salary_visible: bool = False
-    # Application period (inclusive). closes_on is the deadline.
+    # Application period (WIB). Opens at opens_on opens_time (00:00 when null); closes at closes_on closes_time
+    # (end of that day when null). Times are "HH:MM".
     opens_on: date | None = None
     closes_on: date | None = None
+    opens_time: time | None = None
+    closes_time: time | None = None
     education_level: EducationLevel | None = None
     education_field: str | None = Field(default=None, max_length=255)
     required_certifications: list[str] = Field(default_factory=list, max_length=20)
@@ -71,6 +80,20 @@ class JobIn(BaseModel):
     weights: WeightsIn | None = None
     # Automatic AI-interview invitations after the application period closes (all keys optional).
     auto_invite: AutoInviteIn | None = None
+
+    @field_validator("opens_time", "closes_time", mode="before")
+    @classmethod
+    def _hhmm(cls, value):
+        if value is None or value == "":
+            return None
+        if not isinstance(value, str) or not _HHMM.match(value):
+            raise ValueError("Use the 24-hour format HH:MM.")
+        return value
+
+    @field_validator("opens_time", "closes_time")
+    @classmethod
+    def _minutes(cls, value: time | None) -> time | None:
+        return value.replace(second=0, microsecond=0) if value is not None else None
 
     @field_validator("required_skills", "preferred_skills", "required_certifications")
     @classmethod
@@ -98,19 +121,25 @@ def _check_salary(job: Job, data: dict) -> None:
 
 
 def _check_period(job: Job, data: dict) -> None:
-    opens = data.get("opens_on", job.opens_on)
-    closes = data.get("closes_on", job.closes_on)
-    if opens and closes and closes < opens:
+    """The closing moment must come after the opening moment (400 with field details)."""
+    period = SimpleNamespace(**{k: data[k] if k in data else getattr(job, k)
+                                for k in ("opens_on", "opens_time", "closes_on", "closes_time")})
+    if period.opens_on is None or period.closes_on is None:
+        return
+    if period.closes_on < period.opens_on:
         raise bad_request("The deadline (closes_on) can't be before the opening date (opens_on).",
                           {"fields": {"closes_on": "Must be on or after the opening date."}})
+    if job_period.closes_at(period) <= job_period.opens_at(period):
+        raise bad_request("Applications must close after they open (closes_time is not after opens_time).",
+                          {"fields": {"closes_time": "Must be later than the opening time."}})
 
 
 def _apply(job: Job, data: dict) -> None:
     _check_period(job, data)
     _check_salary(job, data)
     for key in ("title", "department", "location", "description", "min_experience_years", "education_level",
-                "education_field", "status", "opens_on", "closes_on", "employment_type", "salary_min", "salary_max",
-                "salary_visible"):
+                "education_field", "status", "opens_on", "closes_on", "opens_time", "closes_time", "employment_type",
+                "salary_min", "salary_max", "salary_visible"):
         if key in data:
             if data[key] is None and key in ("employment_type", "salary_visible", "status"):
                 continue  # non-nullable: an explicit null means "leave unchanged"
@@ -123,6 +152,8 @@ def _apply(job: Job, data: dict) -> None:
             job.auto_invite_top_n = auto["top_n"]
         if "min_score" in auto:
             job.auto_invite_min_score = auto["min_score"]
+        if auto.get("timing") is not None:
+            job.auto_invite_timing = auto["timing"]
     kinds = {"required_skills": "required_skill", "preferred_skills": "preferred_skill",
              "required_certifications": "certification"}
     for key, kind in kinds.items():
@@ -165,7 +196,8 @@ class Jobs(Resource):
     def post(self):
         """Create a job with its requirements. Scoring weights are organisation-wide (Settings → Scoring weights)."""
         body = parse_body(JobIn).model_dump()
-        job = Job(weights={}, created_by_id=current_actor().id, auto_invite_enabled=True, auto_invite_top_n=10)
+        job = Job(weights={}, created_by_id=current_actor().id, auto_invite_enabled=True, auto_invite_top_n=10,
+                  auto_invite_timing="next_morning")
         _apply(job, body)
         db.session.add(job)
         db.session.flush()

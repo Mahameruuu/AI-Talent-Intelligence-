@@ -9,6 +9,7 @@ const autoInvite: AutoInvite = {
   top_n: 10,
   min_score: null,
   send_at: "2026-10-31T08:00:00+07:00",
+  timing: "next_morning",
   status: "scheduled",
   template_id: 3,
   template_name: "Data Scientist interview",
@@ -39,6 +40,10 @@ const baseJob: Job = {
   closes_on: "2026-10-30",
   application_window: "open",
   days_left: 4,
+  opens_time: null,
+  closes_time: null,
+  opens_at: null,
+  closes_at: null,
   weights: { required_skills: 40, preferred_skills: 10, experience: 20, education: 10, certifications: 5, semantic: 15, screening_questions: 0 },
   auto_invite: autoInvite,
   is_demo: false,
@@ -58,6 +63,22 @@ function periodCell(overrides: Partial<AutoInvite>, jobOverrides: Partial<Job> =
 describe("JobsTable auto-invite line", () => {
   it("shows the scheduled send time", () => {
     expect(periodCell({})).toHaveTextContent("AI interview invites: 31 Oct, 08:00");
+  });
+
+  it("shows the deadline date only when the job closes at the end of the day", () => {
+    const cell = periodCell({});
+    expect(cell).toHaveTextContent("Until 30 Oct 2026");
+    expect(cell).not.toHaveTextContent("Until 30 Oct 2026,");
+  });
+
+  it("shows the closing time and an on-close invite time", () => {
+    const cell = periodCell(
+      { timing: "on_close", send_at: "2026-10-27T14:00:00+07:00" },
+      { closes_on: "2026-10-27", closes_time: "14:00", closes_at: "2026-10-27T14:00:00+07:00", days_left: 0 },
+    );
+    expect(cell).toHaveTextContent("Until 27 Oct 2026, 14:00");
+    expect(cell).toHaveTextContent("Closes today");
+    expect(cell).toHaveTextContent("AI interview invites: 27 Oct, 14:00");
   });
 
   it("shows how many were invited once sent", () => {

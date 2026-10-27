@@ -50,6 +50,8 @@ def test_dashboard_counts(client, hr, job):
     first, main = data["jobs"][0], data["jobs"][1]
     assert first["closes_on"] == (today + timedelta(days=2)).isoformat()
     assert first["auto_invite_on"] == (today + timedelta(days=3)).isoformat() and first["applicants"] == 0
+    assert first["auto_invite_at"] == f"{(today + timedelta(days=3)).isoformat()}T08:00:00+07:00"
+    assert first["closes_time"] is None and main["auto_invite_at"] is None
     assert main["applicants"] == 3 and main["interviewed"] == 2 and main["hired"] == 1
     assert main["avg_match_score"] is not None and main["auto_invite_on"] is None
 
@@ -58,7 +60,9 @@ def test_dashboard_counts(client, hr, job):
     assert decision["application_id"] == waiting_app and decision["job_title"] == "Data Scientist"
     assert decision["completed_at"]
     assert deadline == {"kind": "job_closing", "job_id": closing.json["id"], "job_title": "Closing Soon",
-                        "closes_on": (today + timedelta(days=2)).isoformat(), "days_left": 2, "applicants": 0}
+                        "closes_on": (today + timedelta(days=2)).isoformat(), "closes_time": None,
+                        "closes_at": f"{(today + timedelta(days=2)).isoformat()}T23:59:59+07:00", "days_left": 2,
+                        "applicants": 0}
     assert data["monthly"][-1] == {"month": today.strftime("%Y-%m"), "applicants": 3, "jobs_opened": 2,
                                    "interviews_completed": 2, "hired": 1}
 

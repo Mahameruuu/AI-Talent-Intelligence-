@@ -27,6 +27,27 @@ export function formatDay(value: string | null | undefined, fallback = "—"): s
   return dateFormatter.format(new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
 }
 
+/** "14:00" from a wall-clock "HH:MM" / "HH:MM:SS" value; null when empty or invalid. */
+export function formatClock(value: string | null | undefined): string | null {
+  const match = value ? /^([01]\d|2[0-3]):([0-5]\d)(:[0-5]\d)?$/.exec(value) : null;
+  return match ? `${match[1]}:${match[2]}` : null;
+}
+
+/**
+ * A calendar day with an optional wall-clock time (both already in WIB), without timezone shifts:
+ * "27 Oct 2026, 14:00", or "27 Oct 2026" when there is no time. `suffix` (e.g. " WIB") follows the time only.
+ */
+export function formatDayTime(
+  day: string | null | undefined,
+  time: string | null | undefined,
+  { fallback = "—", suffix = "" }: { fallback?: string; suffix?: string } = {},
+): string {
+  if (!day) return fallback;
+  const clock = formatClock(time);
+  const date = formatDay(day, fallback);
+  return clock ? `${date}, ${clock}${suffix}` : date;
+}
+
 /** Whole days between two "YYYY-MM-DD" calendar days (b − a). */
 export function daysBetween(a: string, b: string): number {
   const parse = (value: string) => {

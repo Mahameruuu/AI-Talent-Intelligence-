@@ -25,6 +25,10 @@ const publicForm: PublicApplicationForm = {
     min_experience_years: 2,
     opens_on: null,
     closes_on: "2026-11-30",
+    opens_time: null,
+    closes_time: null,
+    opens_at: null,
+    closes_at: "2026-11-30T23:59:59+07:00",
     employment_type: "full_time",
     salary_min: null,
     salary_max: null,
@@ -182,6 +186,22 @@ describe("PublicApplyPage", () => {
     expect(honeypot).toHaveAttribute("autocomplete", "off");
   });
 
+  it("shows the deadline day, with the closing time in WIB when one is set", async () => {
+    mockFetch(() => jsonResponse(publicForm));
+    const { unmount } = renderPage();
+    expect(await screen.findByText("Apply by 30 Nov 2026")).toBeInTheDocument();
+    unmount();
+
+    mockFetch(() =>
+      jsonResponse({
+        ...publicForm,
+        job: { ...publicForm.job, closes_time: "14:00", closes_at: "2026-11-30T14:00:00+07:00" },
+      }),
+    );
+    renderPage();
+    expect(await screen.findByText("Apply by 30 Nov 2026, 14:00 WIB")).toBeInTheDocument();
+  });
+
   it("shows the salary range only when HR shared it", async () => {
     mockFetch(() =>
       jsonResponse({
@@ -327,9 +347,21 @@ describe("PublicApplyPage", () => {
         job: { ...publicForm.job, opens_on: "2026-12-01", closes_on: "2026-12-31" },
       }),
     );
-    const { unmount } = renderPage();
+    let { unmount } = renderPage();
     expect(await screen.findByRole("heading", { name: /applications aren't open yet/i })).toBeInTheDocument();
     expect(screen.getByText("01 Dec 2026")).toBeInTheDocument();
+    unmount();
+
+    mockFetch(() =>
+      jsonResponse({
+        ...publicForm,
+        accepting_applications: false,
+        closed_reason: "not_yet_open",
+        job: { ...publicForm.job, opens_on: "2026-12-01", opens_time: "09:00", closes_on: "2026-12-31" },
+      }),
+    );
+    ({ unmount } = renderPage());
+    expect(await screen.findByText("01 Dec 2026, 09:00 WIB")).toBeInTheDocument();
     unmount();
 
     mockFetch(() =>

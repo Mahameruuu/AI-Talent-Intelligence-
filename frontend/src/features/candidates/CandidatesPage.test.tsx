@@ -50,6 +50,7 @@ const scheduled: Job["auto_invite"] = {
   top_n: 10,
   min_score: null,
   send_at: "2026-10-31T08:00:00+07:00",
+  timing: "next_morning",
   status: "scheduled",
   template_id: 3,
   template_name: "Data Scientist interview",
@@ -194,6 +195,27 @@ describe("CandidatesPage", () => {
         return jsonResponse({ error: { code: "not_found", message: "Not found" } }, 404);
       });
     }
+
+    it("says when on-close invitations go out", async () => {
+      const onClose: Job = {
+        ...job,
+        closes_on: "2026-10-27",
+        closes_time: "14:00",
+        auto_invite: { ...scheduled, timing: "on_close", send_at: "2026-10-27T14:00:00+07:00" },
+      };
+      mockFetch((url) => {
+        if (url.includes("/applications")) return jsonResponse(page(applications));
+        if (url.includes("/jobs")) return jsonResponse(page([onClose], 100));
+        if (url.includes("/documents/")) return jsonResponse(processingDocument(14));
+        return jsonResponse({ error: { code: "not_found", message: "Not found" } }, 404);
+      });
+      renderWithProviders(<CandidatesPage />, { route: "/candidates?job_id=5" });
+
+      const bar = await screen.findByRole("region", { name: "AI interview invitations" });
+      expect(bar).toHaveTextContent(
+        "AI interview invitations go out automatically right after applications close, on 27 Oct 2026, 14:00 WIB, to the top 10 applicants.",
+      );
+    });
 
     it("shows when invitations go out and sends them now after confirming", async () => {
       const sent: Job = {
